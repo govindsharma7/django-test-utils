@@ -48,41 +48,47 @@ def run_tests(test_labels, verbosity=1, interactive=True, extra_tests=[]):
 
     suite = reorder_suite(suite, (TestCase,))
 
-    old_name = settings.DATABASES['default']['NAME']
-
     ###Everything up to here is from django.test.simple
 
     from django.db.backends import creation
-    from django.db import connection, DatabaseError
+    from django.db import connections, DatabaseError
 
-    if settings.DATABASES['default']['TEST_NAME']:
-        settings.DATABASES['default']['NAME'] = settings.DATABASES['default']['TEST_NAME']
-    else:
-        settings.DATABASES['default']['NAME'] = creation.TEST_DATABASE_PREFIX + settings.DATABASES['default']['NAME']
-    connection.settings_dict["DATABASE_NAME"] = settings.DATABASES['default']['NAME']
+    old_name = {}
+    for alias in connections:
+        connection = connections[alias]
+        old_name[alias] = settings.DATABASES[alias]['NAME']
 
-    # does test db exist already ?
-    try:
-        if settings.DATABASES['default']['ENGINE'] == 'sqlite3':
-            if not os.path.exists(settings.DATABASES['default']['NAME']):
-                raise DatabaseError
-        cursor = connection.cursor()
-    except Exception:
-        # db does not exist
-        # juggling !  create_test_db switches the DATABASE_NAME to the TEST_DATABASE_NAME
-        settings.DATABASES['default']['NAME'] = old_name
-        connection.settings_dict["DATABASE_NAME"] = old_name
-        connection.creation.create_test_db(verbosity, autoclobber=True)
-    else:
-        connection.close()
+        if settings.DATABASES[alias]['TEST_NAME']:
+            settings.DATABASES[alias]['NAME'] = settings.DATABASES[alias]['TEST_NAME']
+        else:
+            settings.DATABASES[alias]['NAME'] = creation.TEST_DATABASE_PREFIX + settings.DATABASES[alias]['NAME']
+        connection.settings_dict["DATABASE_NAME"] = settings.DATABASES[alias]['NAME']
 
-    settings.DATABASES['default']['SUPPORTS_TRANSACTIONS'] = connection.creation._rollback_works()
+        # does test db exist already ?
+        try:
+            if settings.DATABASES[alias]['ENGINE'] == 'sqlite3':
+                if not os.path.exists(settings.DATABASES[alias]['NAME']):
+                    raise DatabaseError
+            connection.cursor()
+        except Exception:
+            print 'database %s does not exist. creating...' % alias
+            # db does not exist
+            # juggling !  create_test_db switches the DATABASE_NAME to the TEST_DATABASE_NAME
+            settings.DATABASES[alias]['NAME'] = old_name[alias]
+            connection.settings_dict["DATABASE_NAME"] = old_name[alias]
+            connection.creation.create_test_db(verbosity, autoclobber=True)
+        else:
+            connection.close()
+
+        settings.DATABASES[alias]['SUPPORTS_TRANSACTIONS'] = connection.creation._rollback_works()
 
     result = unittest.TextTestRunner(verbosity=verbosity).run(suite)
 
-    #Since we don't call destory_test_db, we need to set the db name back.
-    settings.DATABASES['default']['NAME'] = old_name
-    connection.settings_dict["DATABASE_NAME"] = old_name
+    for alias in settings.DATABASES:
+        #Since we don't call destory_test_db, we need to set the db name back.
+        settings.DATABASES[alias]['NAME'] = old_name[alias]
+        connection.settings_dict["DATABASE_NAME"] = old_name[alias]
+
     teardown_test_environment()
 
     return len(result.failures) + len(result.errors)
